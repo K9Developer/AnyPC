@@ -169,7 +169,9 @@ class ScreenControl:
             while ScreenControl.accepting_sc:
                 packets = screen_share.get_frame()
                 if packets is None:
+                    Terminal.verbose(f"Got empty packets, skippig...")
                     continue
+                    
                 for packet in packets:
                     NetworkUtils.send_parts(client, [Events.ScreenFrame_Action.value, packet])
                     data_sent_per_sec += len(packet)
@@ -177,7 +179,7 @@ class ScreenControl:
                 frame_count += 1
                 if time.time() - fps_timer >= 1.0:
                     kb_sent = data_sent_per_sec / 1024
-                    # Terminal.verbose(f"ScreenShare FPS: {frame_count} | KB/s: {kb_sent:.2f}")
+                    Terminal.verbose(f"ScreenShare FPS: {frame_count} | KB/s: {kb_sent:.2f}")
                     frame_count = 0
                     data_sent_per_sec = 0
                     fps_timer = time.time()

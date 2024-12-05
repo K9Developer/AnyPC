@@ -89,15 +89,13 @@ class ScreenShare:
             'preset': 'ultrafast',
             'crf': '30',
             'tune': 'zerolatency',
-            'profile': 'baseline',
-            'level': '4.1',
-            'threads': '6',
+            'threads': str(os.cpu_count()//2),
             'thread_type': 'frame',
             'rc-lookahead': '0',
             'fast_pskip': '1',
             'zerolatency': '1',
-            'x264opts': 'no-mbtree:sliced-threads:sync-lookahead=0'
         }
+        
 
         self.frame_count = 0
 
@@ -105,13 +103,20 @@ class ScreenShare:
         Terminal.debug("Entering screen share context...")
         self.sct = mss()
         self.monitor = self.sct.monitors[1]
+        while not self.codec.is_open:
+            self.codec.open()
+        Terminal.info("Codec is ready.")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         Terminal.debug("Exiting screen share context...")
         if self.sct:
             self.sct.close()
-        for packet in self.codec.encode(None): # flush the codec
+        try:
+            for packet in self.codec.encode(None): # flush the codec
+                pass
+        except Exception:
             pass
 
     def __compress_and_encode_frame(self, frame):
@@ -119,6 +124,7 @@ class ScreenShare:
         encoded_frame.pts = self.frame_count
         self.frame_count += 1
         packets = self.codec.encode(encoded_frame)
+        
         return packets
 
     def get_frame(self):
