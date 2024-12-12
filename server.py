@@ -1,6 +1,4 @@
 __author__ = "K9 & Alon"
-import math
-from encryption_manager import EncryptionManager
 import event_handler
 from utils import Connection, DataType, NetworkUtils, Event
 import socket
@@ -57,7 +55,7 @@ class ControlledPC:
         NetworkUtils.listen_for_events(client)
 
     def start_accept_clients(self):
-        Terminal.info("Waiting for clients to connect...")
+        Terminal.info("\nWaiting for clients to connect...")
         self.server_s.settimeout(0.5)
 
         while self.open:

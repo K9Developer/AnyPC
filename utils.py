@@ -1,14 +1,11 @@
-from enum import Enum
-
 import struct
 import socket
 import threading
 from typing import Any
 
 from constants import DataType, Error, Options, Events
+from encryption_manager import Encryption
 from terminal import Terminal
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import AES, PKCS1_OAEP
 import base64
 
 def byte_length(i):
@@ -19,32 +16,29 @@ class Connection:
         self.socket: socket.socket = s
         self.ip: str = addr[0]
         self.port: int = addr[1]
-        self.secret: AES.EaxMode = None
+        self.encryption_manager = Encryption()
         
     def initiate_key_switch(self):
-        # try:
-            k = RSA.generate(Options.RSA_KEY_SIZE)
-            pub = k.publickey()
-            private_key_obj = PKCS1_OAEP.new(k)
-            public_key_bytes = pub.export_key(format='DER')
-            Terminal.verbose("Created RSA keys")
-            
-            self.send_event(Events.PublicKeyTransfer_Action, [base64.b64encode(public_key_bytes)], encrypt=False)
-            Terminal.verbose("Waiting for symetric key")
-            
-            parts, _ = self.recieve_parts(decrypt=False)
-            if parts[0] == Events.SecretTransfer_Action.value.encode():
-                nonce = private_key_obj.decrypt(base64.b64decode(parts[1]))
-                secret_k = private_key_obj.decrypt(base64.b64decode(parts[2]))
-                Terminal.verbose(f"Recieved secret: {'*'*len(secret_k)} {secret_k}")
-                self.secret = AES.new(secret_k, AES.MODE_EAX, nonce=nonce)
-                Terminal.verbose(f"Created AES secret.")
-                self.send_success("Successfully achieved end-to-end encryption channel.")
-            else:
+        private_k, public_k = self.encryption_manager.generate_rsa_keys()
+        public_bytes = public_k.dump_bytes()
+        Terminal.verbose("Created RSA keys")
+        self.send_event(Events.PublicKeyTransfer_Action, [base64.b64encode(public_bytes)], encrypt=False)
+        parts, _ = self.recieve_parts(decrypt=False)
+        if parts[0] == Events.SecretTransfer_Action.value.encode():
+            if len(parts) != 2:
                 self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption", encrypt=False)
-        # except Exception:
-        #     self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption", encrypt=False)
-        #     self.disconnect()
+                self.disconnect()
+                return
+            
+            secret_bytes = self.encryption_manager.rsa_decrypt(private_k, base64.b64decode(parts[1]))
+            self.encryption_manager.set_sym_key(secret_bytes)
+            Terminal.verbose(f"Recieved secret: {'*'*len(secret_bytes)}")
+            self.send_success("Successfully completed end-to-end encryption")
+        else:
+            self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption", encrypt=False)
+            self.disconnect()
+            return
+
 
     def disconnect(self):
         try:
@@ -125,16 +119,8 @@ class NetworkUtils:
             Terminal.error("Error occured while recieving data " + str(e))
 
         if not decrypt: return data
-
-        cipher, tag = data.split(Options.SEPERATOR)
-        derypted = client.secret.decrypt(base64.b64decode(cipher.decode()))
-        try:
-            client.secret.verify(base64.b64decode(tag.decode()))
-        except ValueError:
-            client.send_failure(Error.CouldntVerifyKey, "Key sent by client could not be verified, terminating connecting.")
-            client.disconnect()
-
-        return derypted
+        decrypted = client.encryption_manager.sym_net_decrypt(data)
+        return decrypted
 
     @staticmethod
     def recieve_parts(client: Connection, decrypt = True) -> tuple[list[bytes], list[bytes]] | None:
@@ -147,46 +133,32 @@ class NetworkUtils:
         return (sep_parts, raw_parts)
 
     @staticmethod
-    def __send_raw(client: Connection, bts: bytes, encrypt = True):
-        # try:
-
-            if encrypt:    
-                encrypted, tag = client.secret.encrypt_and_digest(bts)
-                print(1, encrypted, client.secret)
-                print(client.secret.decrypt(encrypted))
-                encrypted = base64.b64encode(encrypted)
-                tag = base64.b64encode(tag)
-                length_b = struct.pack(Options.SIZE_OF_SIZE_ENCODING_PROTOCOL, len(encrypted+Options.SEPERATOR+tag))
-            else:
-                length_b = struct.pack(Options.SIZE_OF_SIZE_ENCODING_PROTOCOL, len(bts))
-                
+    def __send_raw(client: Connection, bts: bytes):
+        try:
+            length_b = struct.pack(Options.SIZE_OF_SIZE_ENCODING_PROTOCOL, len(bts))
             match client.socket.type:
                 case socket.SOCK_STREAM:
-                    
-                    if encrypt:
-                        client.socket.sendall(length_b+encrypted+Options.SEPERATOR+tag)
-                    else:
-                        client.socket.sendall(length_b+bts)
+                    client.socket.sendall(length_b+bts)
                     return True
                 case socket.SOCK_DGRAM:
                     client.socket.sendto(length_b, (client.ip, client.port))
-                    if encrypt:
-                        client.socket.sendto(encrypted+Options.SEPERATOR+tag,(client.ip, client.port))
-                    else:
-                        client.socket.sendto(bts,(client.ip, client.port))
-                        
+                    client.socket.sendto(bts,(client.ip, client.port))
                     return True
 
             return False
-        # except Exception:
-        #     return False
+        except Exception:
+            return False
 
     @staticmethod
     def send_parts(client: Connection, parts: list, add_sep = True, encrypt = True):
         encoded_parts = [b if type(b) != str else b.encode() for b in parts]
         encoded_parts = [b if type(b) != int else int.to_bytes(b, byte_length(b)) for b in encoded_parts]
         bts = (Options.SEPERATOR if add_sep else b'').join(encoded_parts)
-        return NetworkUtils.__send_raw(client, bts, encrypt)
+
+        if encrypt:
+            bts = client.encryption_manager.sym_net_encrypt(bts)
+
+        return NetworkUtils.__send_raw(client, bts)
 
     @staticmethod
     def add_listener(event_id: Events, event: type[Event], data_type: DataType = DataType.Part):
@@ -216,7 +188,7 @@ class NetworkUtils:
         def thread():
             while NetworkUtils.event_thread_status[client]:
 
-                parts = client.recieve_parts(decrypt=False)
+                parts = client.recieve_parts()
                 if parts == None:
                     NetworkUtils.__callback_event(Events.ConnectionClosed, [], [] ,client)
                     continue

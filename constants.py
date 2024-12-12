@@ -25,6 +25,8 @@ class Options:
     SCREEN_SIZE_FACTOR = 0.9
     
     RSA_KEY_SIZE = 1024
+    NONCE_SIZE = 16
+    TAG_SIZE = 16
 
 class Events(Enum):
     Screenshot_Request = "SSRQ"

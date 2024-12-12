@@ -1,7 +1,7 @@
 import socket
 from constants import Options, Events
 from screen_share import ScreenShare
-from utils import NetworkUtils
+from utils import Connection, NetworkUtils
 import pyautogui
 import threading
 import numpy as np
@@ -112,8 +112,6 @@ class ScreenControl:
             mouse_button = None if mouse_button_id == 0 else ("left" if mouse_button_id == 1 else ("right" if mouse_button_id == 2 else "middle"))
             mouse_state = 'up' if mouse_state_id == 0 else ("down" if mouse_state_id == 1 else ("scroll_d" if mouse_state_id == 2 else "scroll_u"))
 
-            # Terminal.verbose(f"Recieved mouse update: ({mouse_x}, {mouse_y}) {mouse_button} is {mouse_state}")
-
             if mouse_button is not None:
                 if mouse_state == "down" and not holding[mouse_button]:
                     pyautogui.mouseDown(button=mouse_button, x=mouse_x, y=mouse_y)
@@ -131,11 +129,12 @@ class ScreenControl:
 
     @staticmethod
     def keyboard_listener():
-        c, addr = ScreenControl.keyboard_update_socket.accept()
+        soc, addr = ScreenControl.keyboard_update_socket.accept()
+        client = Connection(soc, addr)
         hold_map: dict[str, bool] = {}
 
         while ScreenControl.accepting_sc:
-            recv = NetworkUtils.recieve_parts(c)
+            recv = client.recieve_parts()
             if recv is None:
                 ScreenControl.accepting_sc = False
                 break
@@ -153,11 +152,12 @@ class ScreenControl:
                 Terminal.verbose(f"Recieved keyboard update: {key} is {key_state} being released")
                 pyautogui.keyUp(key=key)
                 if key in hold_map: del hold_map[key]
-        c.close()
+        client.disconnect()
 
     @staticmethod
     def screen_share():
-        client, _ = ScreenControl.screen_update_socket.accept()
+        soc, addr = ScreenControl.screen_update_socket.accept()
+        client = Connection(soc, addr)
 
         ss = ScreenShare()
         with ss as screen_share:
