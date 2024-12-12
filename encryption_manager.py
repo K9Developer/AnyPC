@@ -25,30 +25,30 @@ class Encryption:
     def __init__(self) -> None:
         self.sym_key = None
 
-    def sym_encrypt(self, data: bytes):
+    def __aes_encrypt(self, data: bytes):
         nonce = get_random_bytes(Options.NONCE_SIZE)
         cipher = AES.new(self.sym_key, AES.MODE_EAX, nonce=nonce, mac_len=Options.TAG_SIZE)
         ciphertext, tag = cipher.encrypt_and_digest(data)
         return [nonce, tag, ciphertext]
     
-    def sym_net_encrypt(self, data: bytes):
-        return Options.SEPERATOR.join(self.sym_encrypt(data))
+    def aes_net_encrypt(self, data: bytes):
+        return b''.join(self.__aes_encrypt(data))
     
-    def sym_decrypt(self, nonce: bytes, tag: bytes, ciphertext: bytes):
-        cipher = AES.new(self.sym_key, AES.MODE_EAX, nonce=nonce)
+    def __aes_decrypt(self, nonce: bytes, tag: bytes, ciphertext: bytes):
+        cipher = AES.new(self.sym_key, AES.MODE_EAX, nonce=nonce, mac_len=Options.TAG_SIZE)
         try:
             data = cipher.decrypt_and_verify(ciphertext, tag)
             return data
         except ValueError:
             return None
     
-    def sym_net_decrypt(self, full: bytes):
-        if len(full) < Options.NONCE_SIZE + Options.TAG_SIZE:
+    def aes_net_decrypt(self, full: bytes):
+        if full is None or len(full) < Options.NONCE_SIZE + Options.TAG_SIZE:
             return None
         nonce = full[:Options.NONCE_SIZE]
         tag = full[Options.NONCE_SIZE:Options.NONCE_SIZE+Options.TAG_SIZE]
         ciphertext = full[Options.NONCE_SIZE+Options.TAG_SIZE:]
-        return self.sym_decrypt(nonce, tag, ciphertext)
+        return self.__aes_decrypt(nonce, tag, ciphertext)
 
     def generate_rsa_keys(self):
         k = RSA.generate(Options.RSA_KEY_SIZE)

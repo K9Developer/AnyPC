@@ -197,7 +197,7 @@ class ScreenControlRequestEvent(Event):
         Terminal.success("Screen control started")
         ScreenControl.allow_control = True
         ScreenControl.accepting_sc = True
-        ScreenControl.start()
+        ScreenControl.start(conn)
 
 class ScreenControlDisconnectEvent(Event):
 
@@ -223,7 +223,7 @@ class ScreenWatchRequestEvent(Event):
         Terminal.success("Screen watch started")
         ScreenControl.accepting_sc = True
         ScreenControl.allow_control = False
-        ScreenControl.start()
+        ScreenControl.start(conn)
 
 class UnknownEvent(Event):
 
@@ -236,5 +236,4 @@ class ConnectionClosedEvent(Event):
     @staticmethod
     def handle(data: list[bytes], conn: Connection):
         NetworkUtils.remove_event_listener(conn)
-        Terminal.warning("Client disconnected from server: " + conn.socket.getpeername()[0])
-        conn.disconnect()
+        Terminal.warning("Client disconnected from server: " + conn.ip)

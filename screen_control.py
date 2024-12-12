@@ -55,19 +55,25 @@ class ScreenControl:
     screen_update_socket.bind(("0.0.0.0", Options.SCREEN_FRAME_PORT))
     keyboard_update_socket.bind(("0.0.0.0", Options.KEYBOARD_UPDATE_PORT))
 
+    mouse_update_conn = Connection(mouse_update_socket, None)
+
     keyboard_update_socket.listen(1)
     screen_update_socket.listen(1)
 
     accepting_sc = False
     allow_control = True
+    main_conn = None
 
     @staticmethod
-    def start():
+    def start(main_conn: Connection):
         if not ScreenControl.accepting_sc: return
+        ScreenControl.main_conn = main_conn
 
         ScreenControl.accepting_sc = False
         time.sleep(0.5)
         ScreenControl.accepting_sc = True
+
+        ScreenControl.mouse_update_conn.encryption_manager = main_conn.encryption_manager
 
         mouse_thread = threading.Thread(target=ScreenControl.mouse_listener)
         screen_thread = threading.Thread(target=ScreenControl.screen_share)
@@ -76,6 +82,8 @@ class ScreenControl:
         if ScreenControl.allow_control: mouse_thread.start()
         if ScreenControl.allow_control: keyboard_thread.start()
         screen_thread.start()
+
+
 
     @staticmethod
     def mouse_listener():
@@ -93,7 +101,7 @@ class ScreenControl:
 
         # [state: 0: no action, 1: down, 2: scroll down, 3: scroll up][button: 0: no action, 1: left, 2: right, 3: middle][x][y]
         while ScreenControl.accepting_sc:
-            recv = NetworkUtils.recieve_parts(ScreenControl.mouse_update_socket)
+            recv = NetworkUtils.recieve_parts(ScreenControl.mouse_update_conn)
             if recv is None:
                 continue
 
@@ -106,8 +114,8 @@ class ScreenControl:
             mouse_pos_x_prec = int.from_bytes(fields[2])
             mouse_pos_y_prec = int.from_bytes(fields[3])
 
-            mouse_x = int(mouse_pos_x_prec / Options.MOUSE_POISITION_ACCURACY * screen_size.width)
-            mouse_y = int(mouse_pos_y_prec / Options.MOUSE_POISITION_ACCURACY * screen_size.height)
+            mouse_x = int(mouse_pos_x_prec / Options.MOUSE_POSITION_ACCURACY * screen_size.width)
+            mouse_y = int(mouse_pos_y_prec / Options.MOUSE_POSITION_ACCURACY * screen_size.height)
 
             mouse_button = None if mouse_button_id == 0 else ("left" if mouse_button_id == 1 else ("right" if mouse_button_id == 2 else "middle"))
             mouse_state = 'up' if mouse_state_id == 0 else ("down" if mouse_state_id == 1 else ("scroll_d" if mouse_state_id == 2 else "scroll_u"))
@@ -126,11 +134,14 @@ class ScreenControl:
 
             pyautogui.moveTo(mouse_x, mouse_y, _pause=False)
 
+        ScreenControl.mouse_update_conn.encryption_manager = None
+
 
     @staticmethod
     def keyboard_listener():
         soc, addr = ScreenControl.keyboard_update_socket.accept()
         client = Connection(soc, addr)
+        client.encryption_manager = ScreenControl.main_conn.encryption_manager
         hold_map: dict[str, bool] = {}
 
         while ScreenControl.accepting_sc:
@@ -152,16 +163,18 @@ class ScreenControl:
                 Terminal.verbose(f"Recieved keyboard update: {key} is {key_state} being released")
                 pyautogui.keyUp(key=key)
                 if key in hold_map: del hold_map[key]
+        
         client.disconnect()
+        ScreenControl.main_conn = None
 
     @staticmethod
     def screen_share():
         soc, addr = ScreenControl.screen_update_socket.accept()
         client = Connection(soc, addr)
+        client.encryption_manager = ScreenControl.main_conn.encryption_manager
 
         ss = ScreenShare()
         with ss as screen_share:
-            last_frame_time = time.time()
             frame_count = 0
             fps_timer = time.time()
             data_sent_per_sec = 0
@@ -184,10 +197,5 @@ class ScreenControl:
                     data_sent_per_sec = 0
                     fps_timer = time.time()
 
-                # while time.time() - last_frame_time < 1 / Options.SCREEN_UPDATE_FRAME_RATE:
-                #     pass
-
-                # last_frame_time = time.time()
-
-        client.shutdown(socket.SHUT_RDWR)
-        client.close()
+        client.disconnect()
+        ScreenControl.main_conn = None

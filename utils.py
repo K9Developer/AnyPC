@@ -12,32 +12,38 @@ def byte_length(i):
     return (i.bit_length() + 7) // 8
 
 class Connection:
-    def __init__(self, s: socket.socket, addr: tuple[str, int]) -> None:
+    def __init__(self, s: socket.socket, addr: tuple[str, int] | None) -> None:
         self.socket: socket.socket = s
-        self.ip: str = addr[0]
-        self.port: int = addr[1]
+        self.ip: str | None = addr[0] if addr is not None else None 
+        self.port: int | None = addr[1] if addr is not None else None
         self.encryption_manager = Encryption()
         
     def initiate_key_switch(self):
-        private_k, public_k = self.encryption_manager.generate_rsa_keys()
-        public_bytes = public_k.dump_bytes()
-        Terminal.verbose("Created RSA keys")
-        self.send_event(Events.PublicKeyTransfer_Action, [base64.b64encode(public_bytes)], encrypt=False)
-        parts, _ = self.recieve_parts(decrypt=False)
-        if parts[0] == Events.SecretTransfer_Action.value.encode():
-            if len(parts) != 2:
-                self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption", encrypt=False)
+        try:
+            private_k, public_k = self.encryption_manager.generate_rsa_keys()
+            public_bytes = public_k.dump_bytes()
+            self.send_event(Events.PublicKeyTransfer_Action, [public_bytes], encrypt=False)
+
+            _, raw = self.recieve_parts(decrypt=False)
+            parts = raw
+            if parts[0] == Events.SecretTransfer_Action.value.encode():
+                if len(parts) != 2:
+                    self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption", encrypt=False)
+                    self.disconnect()
+                    return
+                
+                secret_bytes = self.encryption_manager.rsa_decrypt(private_k, parts[1])
+                self.encryption_manager.set_sym_key(secret_bytes)
+
+                Terminal.verbose(f"Recieved secret: {'*'*len(secret_bytes)}")
+                self.send_success("Successfully established an end-to-end encryption channel!")
+            else:
+                self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption (Wrong action)", encrypt=False)
                 self.disconnect()
                 return
-            
-            secret_bytes = self.encryption_manager.rsa_decrypt(private_k, base64.b64decode(parts[1]))
-            self.encryption_manager.set_sym_key(secret_bytes)
-            Terminal.verbose(f"Recieved secret: {'*'*len(secret_bytes)}")
-            self.send_success("Successfully completed end-to-end encryption")
-        else:
-            self.send_failure(Error.FailureToSendKey, "Failed to complete end-to-end encryption", encrypt=False)
+        except Exception as e:
+            self.send_failure(Error.FailureToSendKey, f"Failed to complete end-to-end encryption: {e}", encrypt=False)
             self.disconnect()
-            return
 
 
     def disconnect(self):
@@ -114,12 +120,13 @@ class NetworkUtils:
                     size = struct.unpack(Options.SIZE_OF_SIZE_ENCODING_PROTOCOL, size_bytes)[0]
                     data_bytes, _ = client.socket.recvfrom(size)
                     data = data_bytes
-
+        except OSError:
+            return None
         except Exception as e:
             Terminal.error("Error occured while recieving data " + str(e))
 
         if not decrypt: return data
-        decrypted = client.encryption_manager.sym_net_decrypt(data)
+        decrypted = client.encryption_manager.aes_net_decrypt(data)
         return decrypted
 
     @staticmethod
@@ -156,7 +163,7 @@ class NetworkUtils:
         bts = (Options.SEPERATOR if add_sep else b'').join(encoded_parts)
 
         if encrypt:
-            bts = client.encryption_manager.sym_net_encrypt(bts)
+            bts = client.encryption_manager.aes_net_encrypt(bts)
 
         return NetworkUtils.__send_raw(client, bts)
 
@@ -181,7 +188,7 @@ class NetworkUtils:
                 case DataType.Raw:
                     event.handle(raw_data, conn)
         except Exception as e:
-            Terminal.error(f"Error occured while handling event {event_id}: {e}")
+            Terminal.error(f"Error occured while handling event {event_id}|{data_type}: {e}")
 
     @staticmethod
     def listen_for_events(client: Connection):
