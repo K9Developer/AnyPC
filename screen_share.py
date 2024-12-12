@@ -7,6 +7,8 @@ import av
 from fractions import Fraction
 from terminal import Terminal
 import os
+import threading
+import queue
 
 def get_cursor(hcursor):
     try:
@@ -98,6 +100,11 @@ class ScreenShare:
         
 
         self.frame_count = 0
+        
+        self.frame_buffer = queue.Queue()
+        self.frame_thread = None
+        self.start_recording = False
+        self.thread_local = threading.local()
 
     def __enter__(self):
         Terminal.debug("Entering screen share context...")
@@ -106,6 +113,11 @@ class ScreenShare:
         while not self.codec.is_open:
             self.codec.open()
         Terminal.info("Codec is ready.")
+        
+        self.start_recording = True
+        self.thread_local.sct = self.sct
+        self.frame_thread = threading.Thread(target=self.__start_recording)
+        self.frame_thread.start()
 
         return self
 
@@ -118,6 +130,10 @@ class ScreenShare:
                 pass
         except Exception:
             pass
+        
+        self.start_recording = False
+        self.frame_buffer.empty()
+        self.frame_thread.join()
 
     def __compress_and_encode_frame(self, frame):
         encoded_frame = av.VideoFrame.from_ndarray(frame, format='bgr24')
@@ -127,12 +143,11 @@ class ScreenShare:
         
         return packets
 
-    def get_frame(self):
-        try:
-            if self.sct is None or self.monitor is None:
-                return None
-
-            screenshot = self.sct.grab(self.monitor)
+    def __start_recording(self):
+        while self.start_recording:
+            if not hasattr(self.thread_local, 'sct'):
+                self.thread_local.sct = mss()
+            screenshot = self.thread_local.sct.grab(self.monitor)
             frame = np.array(screenshot)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
             frame = add_cursor_to_frame(frame)
@@ -140,6 +155,16 @@ class ScreenShare:
             new_width = int(frame.shape[1] * Options.SCREEN_SIZE_FACTOR)
             new_height = int(frame.shape[0] * Options.SCREEN_SIZE_FACTOR)
             frame = cv2.resize(frame, (new_width, new_height))
+            self.frame_buffer.put(frame)
+            
+
+    def get_frame(self):
+        try:
+            if self.sct is None or self.monitor is None:
+                return None
+
+            frame = self.frame_buffer.get()
+            if frame is None: return None
 
             av_packets = self.__compress_and_encode_frame(frame)
 
@@ -149,5 +174,5 @@ class ScreenShare:
                 to_send.append(packet_bytes)
 
             return to_send
-        except Exception as e:
+        except Exception:
             return None

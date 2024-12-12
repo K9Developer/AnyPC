@@ -23,6 +23,8 @@ class Options:
     REGION_SIZE_BYTES = 3
     MAX_REGION_AREA = 60000
     SCREEN_SIZE_FACTOR = 0.9
+    
+    RSA_KEY_SIZE = 1024
 
 class Events(Enum):
     Screenshot_Request = "SSRQ"
@@ -51,6 +53,9 @@ class Events(Enum):
     ScreenWatchDisconnect_Action = "DNSW"
     AcceptScreenWatch_Response = "ACSW"
 
+    PublicKeyTransfer_Action = "PUKT"
+    SecretTransfer_Action = "SECT"
+
     ConnectionClosed = "CLOS"
     UnknownEvent = "UNKNOWN_EVENT"
 
@@ -62,9 +67,11 @@ class Events(Enum):
         return cls.UnknownEvent
 
 class Error(Enum):
-    UnknownError = 0
-    FileNotFound = 1
-    BadPath      = 2
+    UnknownError     = 0
+    FileNotFound     = 1
+    BadPath          = 2
+    FailureToSendKey = 3
+    CouldntVerifyKey = 4
 
 class DataType(Enum):
     Raw = "RAW",

@@ -1,5 +1,6 @@
 __author__ = "K9 & Alon"
 import math
+from encryption_manager import EncryptionManager
 import event_handler
 from utils import Connection, DataType, NetworkUtils, Event
 import socket
@@ -51,6 +52,8 @@ class ControlledPC:
         exit(0)
 
     def handle_client(self, client: Connection):
+        
+        client.initiate_key_switch()
         NetworkUtils.listen_for_events(client)
 
     def start_accept_clients(self):
